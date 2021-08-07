@@ -801,8 +801,8 @@ class Simulator:
             if not no_disease and stage>5:
                 Simulator.simulate_disease(network.Nodes,network.centralized_locations,stage)
 
-        if results_queue:
-            results_queue.put(stages_list)
+        if not results_queue == None :
+            results_queue.append(stages_list)
         else:
             return stages_list
 
@@ -832,24 +832,23 @@ class Simulator:
 
         else:
             processes=[]
-            q=mp.Queue()
+            m=mp.Manager()
+            q=m.list()
             if political_change:
                 for i in range(self.repetitions):
                     p=mp.Process(target=self.simulate_with_pol_change,args=(n,n_stages,no_disease,q))
                     processes.append(p)
                     p.start()
-
             else:
                 for i in range(self.repetitions):
-                    p=mp.Process(target=self.simulate_basic,args=(n,n_stages,no_disease) )
+                    p=mp.Process(target=self.simulate_basic,args=(n,n_stages,no_disease,q) )
                     processes.append(p)
                     p.start()
 
             for p in processes:
                 p.join()
-                self.results.append(q.get())
 
-        self.results
+        self.results=list(q)
 
         if return_results:
             return self.results
@@ -859,7 +858,6 @@ class Simulator:
 
 
 if __name__=="__main__":
-
     n=Network(1000,20,20,0,0,10,0)
     n.add_edges(0.05,0.05,0.01,0)
     sim=Simulator(n,10)
