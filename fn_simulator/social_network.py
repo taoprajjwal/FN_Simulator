@@ -463,6 +463,7 @@ class Stage:
 
         self.degree_dist=n.degree_distribution()
         self.degree_dist_in=n.degree_distribution(outdegree=False)
+
         for node in n.Nodes.values():
             self.nodes_dict.append(node.asdict())
             self.status_count[node.news_state]=self.status_count.get(node.news_state,0)+1
@@ -650,6 +651,7 @@ class Simulator:
             print(f"{stage}  ",end=" ")
             set_tweets_to_edges(network)
             stages_list.append(Stage(stage,network))
+
             if save_name and stage %5==0:
                 pickle.dump(stages_list,open(save_name,"wb"))
 
@@ -858,7 +860,16 @@ class Simulator:
 
 
 if __name__=="__main__":
+    """
+    ## Initial configuration
     n=Network(1000,20,20,0,0,10,0)
     n.add_edges(0.05,0.05,0.01,0)
     sim=Simulator(n,10)
-    sim.run(100,save_name="dropped_edges",no_disease=True)
+    sim.run(100,save_name="nopol_init",no_disease=True,political_change=False)
+    """
+
+    for n_bots in [10,20,40,80]:
+        n=Network(1000,20,n_bots,0,0,10,0)
+        n.add_edges(0.05,0.05,0.01,0)
+        sim=Simulator(n,10)
+        sim.run(50,save_name=f"nopol_changing_bots_{n_bots}",no_disease=True,political_change=False)
