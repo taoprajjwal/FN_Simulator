@@ -19,6 +19,7 @@ HEALTH_PRECAUTIONS_ALPHA=0.3
 FOLLOW_ENGAGEMENT_THRESHOLD=0.8
 MEAN_CONTACT_GROUPED=1
 CONTACT_MINIMUM_THRESHOLD=0.001
+VAXX_PRECAUTION_ALPHA=0.1
 
 
 def distance(x,y):
@@ -106,6 +107,9 @@ class Agent:
         self.faked_tweets=[]
         self.prev_tweets=[]
 
+        self.vaccine_rate=normal(0.3,0.1,0,1)
+        self.contact=0
+
     def asdict(self):
         edge_trusts=[edge.trust for edge in self.following]
 
@@ -131,6 +135,7 @@ class Agent:
         self.news_state=news_state
         if news_state==FakeNewsState.Infected:
             self.health_precautions-=HEALTH_PRECAUTIONS_ALPHA
+            self.vaccine_rate-=VAXX_PRECAUTION_ALPHA*3
 
         if news_state==FakeNewsState.Recovered:
             self.health_precautions+=HEALTH_PRECAUTIONS_ALPHA
@@ -285,6 +290,8 @@ class Network:
         location_nodes=self.common_nodes+self.influencer_nodes
         np.random.shuffle(location_nodes)
 
+        self.random_draw_nodes=random.sample(self.common_nodes,50)
+
         for c,nodes_list in enumerate(np.array_split(location_nodes,N_centralized_locale)):
             for agent_idx in nodes_list:
                 self.Nodes[agent_idx].centralized_location_index=c
@@ -364,6 +371,53 @@ class Network:
         nk.viztasks.drawGraph(self.graph,with_labels=True,pos=posititons,node_color=colors,node_size=150,edge_color="grey")
         plt.savefig(fig_name)
         return plt
+
+
+    def draw_political_network(self,fig_name,stage_no):
+        selected_nodes={}
+        node_to_selected_node_map={}
+        for i, idx in enumerate(self.random_draw_nodes):
+            selected_nodes[i]=self.Nodes[idx]
+            node_to_selected_node_map[idx]=i
+
+        new_network=nk.Graph(len(selected_nodes),directed=True)
+
+        for node_id,node in selected_nodes.items():
+            for idx in node.following_id:
+                if node_to_selected_node_map.get(idx):
+                    new_network.addEdge(node_id,node_to_selected_node_map[idx])
+
+        positions={}
+        colors=[]
+        edge_colors=[]
+
+        for node1,node2 in new_network.iterEdges():
+            if selected_nodes[node1].political<0:
+                edge_colors.append("blue")
+            else:
+                edge_colors.append("red")
+
+
+        for idx,node in selected_nodes.items():
+
+
+            if node.political>0 and stage_no>20:
+                colors.append("red")
+                if stage_no>20:
+                    positions[idx]=[node.political-normal(0.2,0.1,0,1),node.geographical[1]]
+                else:
+                    positions[idx]=[node.political,node.geographical[1]]
+            else:
+                colors.append("blue")
+                if stage_no>20:
+                    positions[idx]=[node.political+normal(0.2,0.1,0,1),node.geographical[1]]
+                else:
+                    positions[idx]=[node.political,node.geographical[1]]
+
+        fig,ax=plt.subplots(1,figsize=(10,10))
+        nk.viztasks.drawGraph(new_network,with_labels=False,pos=positions,node_color=colors,node_size=75,edge_color=edge_colors,ax=ax)
+        ax.set_xlim(-1.1,1.1)
+        fig.savefig(fig_name)
 
     def degree_distribution(self,dist_type="all",outdegree=True):
         scores=np.array(nk.centrality.DegreeCentrality(self.graph,outDeg=outdegree).run().scores())
@@ -460,11 +514,16 @@ class Stage:
         self.political_engagement_polarity_med=[]
         self.degree_dist={}
         self.degree_dist_in={}
+        self.contact=[]
 
         self.degree_dist=n.degree_distribution()
         self.degree_dist_in=n.degree_distribution(outdegree=False)
 
+
+        #n.draw_political_network(f"network_{stage_no}",stage_no)
+
         for node in n.Nodes.values():
+            self.contact.append(node.contact)
             self.nodes_dict.append(node.asdict())
             self.status_count[node.news_state]=self.status_count.get(node.news_state,0)+1
             self.disease_status[node.disease_state]=self.disease_status.get(node.disease_state,0)+1
@@ -532,7 +591,7 @@ class Stage:
 
 class SimulatorResults:
     dict_attr=["status_count","political_statuses","disease_status","node_types_per_status","degree_distribution","degree_dist_in"]
-    list_attr=["tweets","edge_trust","infected_node_polarity","bot_follow_percentage","reproduction_no","political_polarity","political_engagement_polarity","political_engagement_polarity_med"]
+    list_attr=["tweets","edge_trust","infected_node_polarity","bot_follow_percentage","reproduction_no","political_polarity","political_engagement_polarity","political_engagement_polarity_med","contact"]
 
 
     def __init__(self,resuts):
@@ -598,6 +657,8 @@ class Simulator:
 
     @staticmethod
     def check_if_transmitted(agent1,agent2,agent_time):
+        agent1.contact+=1
+        agent2.contact+=1
         if agent1.disease_state==DiseaseState.Infected and agent2.disease_state==DiseaseState.Susceptible:
             if random.uniform(0,1)< agent1.health_precautions*agent2.health_precautions:
                 agent2.disease_state=DiseaseState.Infected
@@ -613,7 +674,10 @@ class Simulator:
                 agent2.transmitted_agents.append(agent1)
 
     @staticmethod
-    def simulate_disease(agents,centralized_locations_dict :dict,stage_no:int):
+    def simulate_disease(agents,centralized_locations_dict :dict,stage_no:int,vaccine_stage_time=50):
+
+        for agent in agents.values():
+            agent.contact=0
 
         # Group Activity Stage
         for agent_groups in centralized_locations_dict.values():
@@ -634,17 +698,21 @@ class Simulator:
 
         for u,v in paired_trees:
             Simulator.check_if_transmitted(agents[u],agents[v],stage_no)
-
+        
 
         # Recovery stage
         for agent in agents.values():
             if agent.disease_state==DiseaseState.Infected and (agent.infection_time + agent.recovery_time)<stage_no:
-                agent.disease_state=DiseaseState.Recovered
+                agent.disease_state=DiseaseState.Susceptible
                 agent.transmitted_agents=[]
                 agent.health_precautions+=HEALTH_PRECAUTIONS_ALPHA
+                #agent.vaccine_rate+=VAXX_PRECAUTION_ALPHA
+
+            if stage_no>50 and random.uniform(0,1)<agent.vaccine_rate:
+                agent.disease_state=DiseaseState.Recovered
 
     @staticmethod
-    def simulate_basic(n : Network, n_stages=100,no_disease=False,save_name=None):
+    def simulate_basic(n : Network, n_stages=100, no_disease=False,results_queue=None,save_name=None):
         network=copy.deepcopy(n)
         stages_list=[]
         for stage in range(n_stages):
@@ -712,8 +780,10 @@ class Simulator:
 
             if not no_disease and stage>5:
                 Simulator.simulate_disease(network.Nodes,network.centralized_locations,stage)
-
-        return stages_list
+        if not results_queue==None:
+            results_queue.append(stages_list)
+        else:
+            return stages_list
 
 
     @staticmethod
@@ -791,7 +861,7 @@ class Simulator:
 
                                 edge.update_edge(eng)
 
-                        if drop_edge and edge.trust<0:
+                        if drop_edge and edge.trust<0.45:
                             node.unfollow(edge)
                             network.remove_edge(edge)
 
@@ -833,6 +903,7 @@ class Simulator:
             self.results.append(stages_list)
 
         else:
+            """
             processes=[]
             m=mp.Manager()
             q=m.list()
@@ -850,7 +921,13 @@ class Simulator:
             for p in processes:
                 p.join()
 
-        self.results=list(q)
+            self.results=list(q)
+            """
+            for i in range(self.repetitions):
+                if political_change:
+                    self.results.append(self.simulate_basic(n,n_stages,no_disease))
+                else:
+                    self.results.append(self.simulate_with_pol_change(n,n_stages,no_disease))
 
         if return_results:
             return self.results
